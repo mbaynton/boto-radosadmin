@@ -22,6 +22,7 @@ from boto.s3.bucket import Bucket
 from boto.connection import AWSAuthConnection
 from boto.exception import StorageResponseError
 import urllib
+from SOAPpy.Types import bodyType
 try:
     import simplejson as json
 except ImportError:
@@ -29,8 +30,8 @@ except ImportError:
 
 class CephConnection(S3Connection):
     def __init__(self, host, aws_access_key_id=None, aws_secret_access_key=None,
-                 is_secure=True, admin_endpoint='/admin/', port=None, 
-                 proxy=None, proxy_port=None, proxy_user=None, proxy_pass=None, debug=0, 
+                 is_secure=True, admin_endpoint='/admin/', port=None,
+                 proxy=None, proxy_port=None, proxy_user=None, proxy_pass=None, debug=0,
                  https_connection_factory=None,
                  calling_format=SubdomainCallingFormat(), path='/',
                  provider='aws', bucket_class=Bucket, security_token=None,
@@ -42,18 +43,32 @@ class CephConnection(S3Connection):
                 host,
                 debug=debug, https_connection_factory=https_connection_factory,
                 calling_format=calling_format,
-                path=path, provider=provider, bucket_class=bucket_class, 
+                path=path, provider=provider, bucket_class=bucket_class,
                 security_token=security_token, suppress_consec_slashes=suppress_consec_slashes,
                 anon=anon)
 
 
     def getUser(self, uid=None):
-        response = AWSAuthConnection.make_request(self, 'GET', self.admin_endpoint + 'user?format=json&' + urllib.urlencode({'uid': uid}), None, '')
+        auth_param = ''
+        if uid != None:
+            auth_param = '&' + urllib.urlencode({'uid': uid})
+        response = AWSAuthConnection.make_request(self, 'GET', self.admin_endpoint + 'user?format=json' + auth_param, None, '')
         body = response.read()
         if response.status == 200:
             return json.loads(body)
         elif response.status == 404: # no such user
             return None
+        else:
+            raise StorageResponseError(response.status, response.reason, body)
+
+    # Including number of objects and used kilobytes, measured in same way as user quota enforcement.
+    def getUserStats(self, uid):
+        parameters = {'uid': uid}
+
+        response = AWSAuthConnection.make_request(self, 'GET', self.admin_endpoint + 'user?stats&format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
+        body = response.read()
+        if response.status == 200:
+            return json.loads(body)
         else:
             raise StorageResponseError(response.status, response.reason, body)
 
@@ -66,12 +81,13 @@ class CephConnection(S3Connection):
 
         if email is not None:
             parameters['email'] = email
+            authParameters['email'] = email
         if key_type is not None:
             parameters['key-type'] = key_type
         if access_key is not None:
             parameters['access-key'] = access_key
         if secret_key is not None:
-            parameters['secret_key'] = secret_key
+            parameters['secret-key'] = secret_key
         if user_caps is not None:
             parameters['user-caps'] = user_caps
         if max_buckets is not None:
@@ -85,14 +101,14 @@ class CephConnection(S3Connection):
             return json.loads(body)
         else:
             raise StorageResponseError(response.status, response.reason, body)
-            
+
     def modifyUser(self, uid, displayName=None, email=None, key_type='s3',
             access_key=None, secret_key=None, user_caps=None,
             generate_key=False, max_buckets=None, suspended=False):
         parameters = {'uid': uid}
         authParameters = {'uid': uid}
 
-	if displayName is not None:
+        if displayName is not None:
             parameters['display-name'] = displayName
         if email is not None:
             parameters['email'] = email
@@ -101,14 +117,14 @@ class CephConnection(S3Connection):
         if access_key is not None:
             parameters['access-key'] = access_key
         if secret_key is not None:
-            parameters['secret_key'] = secret_key
+            parameters['secret-key'] = secret_key
         if user_caps is not None:
             parameters['user-caps'] = user_caps
         if max_buckets is not None:
             parameters['max-buckets'] = max_buckets
         parameters['generate-key'] = generate_key
         parameters['suspended'] = suspended
-        
+
         response = AWSAuthConnection.make_request(self, 'POST', self.admin_endpoint + 'user?format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters)) # because, it seems to need the params of this POST request in the URL query string...
         body = response.read()
         if response.status == 200:
@@ -118,30 +134,88 @@ class CephConnection(S3Connection):
 
 
     def createKey(self, uid, key_type='s3', access_key=None, secret_key=None, generate_key=True ):
-    	parameters = {'uid': uid, 'key-type': key_type, 'generate-key': generate_key}
-    	if access_key is not None:
-    	    parameters['access-key'] = access_key
-    	if secret_key is not None:
-    	    parameters['secret-key'] = secret_key    	
-    	
-    	response = AWSAuthConnection.make_request(self, 'PUT', self.admin_endpoint + 'user?key&format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
-    	body = response.read()
-    	if response.status == 200:
+        parameters = {'uid': uid, 'key-type': key_type, 'generate-key': generate_key}
+        if access_key is not None:
+            parameters['access-key'] = access_key
+        if secret_key is not None:
+            parameters['secret-key'] = secret_key
+
+        response = AWSAuthConnection.make_request(self, 'PUT', self.admin_endpoint + 'user?key&format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
+        body = response.read()
+        if response.status == 200:
             return json.loads(body)
         else:
             raise StorageResponseError(response.status, response.reason, body)
-    	
-            
+
+
     def removeKey(self, access_key, uid=None, key_type='s3'):
-    	parameters = {'access-key': access_key, 'key-type': key_type}
-    	if uid is not None:
-    	    parameters['uid'] = uid
-    	
-    	response = AWSAuthConnection.make_request(self, 'DELETE', self.admin_endpoint + 'user?key&format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
-    	body = response.read()
-    	if response.status == 200:
+        parameters = {'access-key': access_key, 'key-type': key_type}
+        if uid is not None:
+            parameters['uid'] = uid
+
+        response = AWSAuthConnection.make_request(self, 'DELETE', self.admin_endpoint + 'user?key&format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
+        body = response.read()
+        if response.status == 200:
             return True
         else:
             raise StorageResponseError(response.status, response.reason, body)
-    	
+
+    def getBucketInfo(self, bucket=None, uid=None, stats=None):
+        parameters = {}
+        if bucket is not None:
+            parameters['bucket'] = bucket
+        if uid is not None:
+            parameters['uid'] = uid
+        if stats is not None:
+            parameters['stats']= stats
+
+        response = AWSAuthConnection.make_request(self, 'GET', self.admin_endpoint + 'bucket?format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
+        body = response.read()
+        if response.status == 200:
+            return json.loads(body)
+        else:
+            raise StorageResponseError(response.status, response.reason, body)
+
+    def unlinkBucket(self, bucket, uid):
+        parameters = {'bucket': bucket, 'uid': uid}
+
+        response = AWSAuthConnection.make_request(self, 'POST', self.admin_endpoint + 'bucket?format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
+        body = response.read()
+        if response.status == 200:
+            return True
+        else:
+            raise StorageResponseError(response.status, response.reason, body)
+
+    def linkBucket(self, bucket, bucket_id, uid):
+        parameters = {'bucket': bucket, 'bucket-id': bucket_id, 'uid': uid}
+
+        response = AWSAuthConnection.make_request(self, 'PUT', self.admin_endpoint + 'bucket?format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
+        body = response.read()
+        if response.status == 200:
+            return True
+        else:
+            # print (response.reason + " || " + body)
+            raise StorageResponseError(response.status, response.reason, body)
+
+    def getQuota(self, uid, quota_type):
+        parameters = {'uid': uid, 'quota-type': quota_type}
+
+        response = AWSAuthConnection.make_request(self, 'GET', self.admin_endpoint + 'user?quota&format=json&' + urllib.urlencode(parameters), data=urllib.urlencode(parameters))
+        body = response.read()
+        if response.status == 200:
+            return json.loads(body)
+        else:
+            raise StorageResponseError(response.status, response.reason, body)
+
+    def setQuota(self, uid, quota_type, max_size_kb, max_objects=-1, enabled=True):
+        parameters = {'uid': uid, 'quota-type': quota_type}
+        body_parameters = {'max_objects': max_objects, 'max_size_kb': max_size_kb, 'enabled': enabled}
+
+        response = AWSAuthConnection.make_request(self, 'PUT', self.admin_endpoint + 'user?quota&format=json&' + urllib.urlencode(parameters), data=json.dumps(body_parameters))
+        body = response.read()
+        if response.status == 200:
+            return body
+        else:
+            raise StorageResponseError(response.status, response.reason, body)
+
 
