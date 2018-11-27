@@ -22,7 +22,7 @@ from boto.s3.bucket import Bucket
 from boto.connection import AWSAuthConnection
 from boto.exception import StorageResponseError
 import urllib
-from SOAPpy.Types import bodyType
+
 try:
     import simplejson as json
 except ImportError:
